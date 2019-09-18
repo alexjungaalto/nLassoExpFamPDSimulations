@@ -21,12 +21,15 @@ N1 = 40;
 N2 = 40;
 % total number of nodes 
 N=N1+N2;
-RUNS = 10; 
+RUNS = 10;
+RUNS = 100; 
 
+profile off 
+profile on 
 % numer of features at each data point 
 
 d=2; 
-
+%d=1;
 
 %G = zeros(N,N) ;
 
@@ -34,8 +37,10 @@ d=2;
 
 
 avg_degree=10; 
+avg_degree=10; 
 boundary_size_values = [5,6,7,8,9,10,12,14,15,16,18,20,22,25,27,30,35,40,50,60,70,80]';
 boundary_size_values = [(2:2:10),20,30,40,60,60]';
+%boundary_size_values = (2:2:4);
 %boundary_size_values = 40; 
 
 
@@ -70,7 +75,7 @@ w2 = -ones(d,1) ;
 w2 = w2/norm(w2) ;
 %w2 = w1 ; %%% only for debugging
 
-barw = (1/100)*[w1*ones(1,N1),w2*ones(1,N2)]; % matrix barw hold in its colums the true weight vector for each node 
+barw = [w1*ones(1,N1),w2*ones(1,N2)]; % matrix barw hold in its colums the true weight vector for each node 
 barw_vec = reshape(barw,d*N,1); %vectorized form of barw
 
 %triu(G_SBM,1) ;
@@ -80,16 +85,18 @@ barw_vec = reshape(barw,d*N,1); %vectorized form of barw
 
 
 %% linear regression model with i.i.d. unit variance zero-mean noise 
-y   = sum(X_mtx.*barw,1) + randn(1,N) ; 
+y   = sum(X_mtx.*barw,1) + 1* randn(1,N) ; 
 
 samplingset = [1:3 (N-2):N]; 
-samplingset = [1:N]; 
+%samplingset = [1:N]; 
 
 %% determine flow from sampled node 1 to boundary between first 
 %% N1 nodes and second N2 nodes 
 
 G1 = G_SBM; 
+
 G1(1:N1,(N1+1):N) = 2*G1(1:N1,(N1+1):N) ; 
+
 G1((N1+1):N,(N1+1):N) = (10^3) *ones(N2,N2) ;
 %G1(1:N1,1:N1) = (10^10) *ones(N1,N1) ;
 G1 = triu(G1,1); 
@@ -152,11 +159,11 @@ edge_weights = zeros(M,1);
 %plot(G);   
 %hold on 
 
-Lambda = diag((1./(sum(abs(D),2)))) ; 
+Lambda = diag(sparse(1./(sum(abs(D),2)))) ; 
 Lambda_block = kron(Lambda,eye(d,d)) ;
-Gamma_vec=0.9*(1./(sum(abs(D),1)))' ;
-Gamma = diag(Gamma_vec);  
-Gamma_block = kron(Gamma,eye(d,d)) ; 
+Gamma_vec=(sparse(1./(sum(abs(D),1))))' ;
+Gamma = diag(sparse(Gamma_vec));  
+Gamma_block = sparse(kron(Gamma,eye(d,d))) ; 
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -177,6 +184,7 @@ hatx = zeros(N,1);
 lambda =1/10 ; 
 lambda = 1/3; 
 lambda = 100; 
+lambda = 1000; 
 
 hatx = zeros(N*d,1); 
 running_average =zeros(N*d,1);
@@ -199,8 +207,8 @@ for iter_node=1:N
     
     mtx_A = tilde_tau*eye(d,d)*inv(X_mtx(:,iter_node)*X_mtx(:,iter_node)'+tilde_tau*eye(d,d)); 
     mtx_B = inv(X_mtx(:,iter_node)*X_mtx(:,iter_node)'+tilde_tau*eye(d,d)); 
-    mtx_A_block = mtx_A_block + kron(msk_dmy,mtx_A) ; 
-     mtx_B_block = mtx_B_block + kron(msk_dmy,mtx_B) ; 
+    mtx_A_block = sparse(mtx_A_block) + sparse(kron(msk_dmy,mtx_A)) ; 
+     mtx_B_block = sparse(mtx_B_block) + sparse(kron(msk_dmy,mtx_B)) ; 
 end
 
 %tilde_tau = length(samplingset)*(1./(2*diag(Gamma_block))) ; 
@@ -208,28 +216,30 @@ end
 
 %mtx_B = diag(ones(dmy,1)./(ones(dmy,1)+tilde_tau)) ; 
 vec_B = mtx_B_block*reshape(X_mtx*diag(y),N*d,1) ; 
-for iterk=1:1000
+for iterk=1:10000
     
   % LP iteration 
   %  hatxLP = inv_degrees.*(A_undirected*hatxLP); 
   %  hatxLP(samplingset) = graphsig(samplingset); 
     
     
-    newx = hatx - Gamma_block*(D_block'*haty) ; 
+    newx = hatx - 0.9*Gamma_block*(D_block'*haty) ; 
     
     %%%% update for least absoluate deviation
     %%%% newx = block_thresholding(newx,samplingset,y,X_mtx,d,N,Gamma_vec) ; 
     
     %%%% update for least squared linear regression 
-    
+    old = newx ; 
     newx = update_x_linreg(newx,samplingset,d,N,mtx_A_block,vec_B) ; 
+    %newx(samplingset) = vec_B(samplingset); 
     
     %%%% update for sparse label propagation 
     %newx(samplingset) = graphsig(samplingset) ;
     
     tildex = 2*newx-hatx; 
-    newy = haty + 0.9*Lambda_block*(D_block*tildex); 
+    newy = haty + Lambda_block*(D_block*tildex); 
     haty = block_clipping(newy,d,M,lambda)  ;
+  % haty=newy;
     hatx = newx; 
     running_average = (running_average*(iterk-1) +hatx)/iterk; 
     
@@ -358,6 +368,7 @@ function weights_out = block_clipping (weights_in,feature_dim,nr_edges,lambda)
 %%% input: weights_in vector of length featuredim*nr_datapoints, scalar
 %%% lambda 
  mtx = reshape(weights_in,feature_dim,nr_edges);
+ weights_out = mtx; 
  x_norm = sqrt(sum(mtx.^2,1)) ; 
 
  
@@ -366,12 +377,14 @@ function weights_out = block_clipping (weights_in,feature_dim,nr_edges,lambda)
  
  for iter_idx=1:length(idx_exceed) 
      idx = idx_exceed(iter_idx) ; 
-     factor(idx) = lambda./x_norm(idx); 
+     tmp = weights_out(:,idx); 
+     weights_out(:,idx) = tmp*lambda./x_norm(idx);
+    % factor(idx) = lambda./x_norm(idx); 
  end
  
  
  %factor = max([x_norm;lambda*ones(1,nr_edges)],[],1) ;  
- weights_out= mtx*diag(factor);
+ %weights_out= mtx*diag(factor);
  
  weights_out = reshape(weights_out,feature_dim*nr_edges,1) ; 
  
@@ -467,6 +480,8 @@ function weights_out = update_x_linreg (weights_in,sampling_set,feature_dim,nr_n
  
 
  tmp = mtx_A*weights_in + vec_B ; %((feature_mtx*diag(y))+w_in*DiagTAU).*inv(eye(length(tau_vec))  %  + reshape(out_of_feature,feature_dim,nr_nodes); 
+% tmp = mtx_A_block*weights_in + vec_B ; %((feature_mtx*diag(y))+w_in*DiagTAU).*inv(eye(length(tau_vec))  %  + reshape(out_of_feature,feature_dim,nr_nodes); 
+ 
  tmp = reshape(tmp,feature_dim,nr_nodes); 
  weights_out = reshape(weights_in,feature_dim,nr_nodes); 
  weights_out(:,sampling_set) = tmp(:,sampling_set); 
